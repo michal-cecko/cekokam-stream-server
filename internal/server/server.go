@@ -31,7 +31,10 @@ func New(storageDir string, h *health.State, healthWindow time.Duration) http.Ha
 		}
 
 		clean := filepath.ToSlash(filepath.Clean(r.URL.Path))
-		if !strings.HasPrefix(clean, "/streams/") && !strings.HasPrefix(clean, "/logos/") {
+		if strings.HasPrefix(clean, "/storage/streams/") || strings.HasPrefix(clean, "/storage/logos/") {
+			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/storage")
+			clean = strings.TrimPrefix(clean, "/storage")
+		} else if !strings.HasPrefix(clean, "/streams/") && !strings.HasPrefix(clean, "/logos/") {
 			http.NotFound(w, r)
 			return
 		}
