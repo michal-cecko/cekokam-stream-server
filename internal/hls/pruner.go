@@ -52,26 +52,36 @@ func (p *Pruner) prune(slug string, logger *slog.Logger) {
 		return
 	}
 
-	dirs := make([]string, 0, len(entries))
+	type seqDir struct {
+		name    string
+		modTime time.Time
+	}
+	dirs := make([]seqDir, 0, len(entries))
 	for _, e := range entries {
-		if e.IsDir() {
-			dirs = append(dirs, e.Name())
+		if !e.IsDir() {
+			continue
 		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		dirs = append(dirs, seqDir{name: e.Name(), modTime: info.ModTime()})
 	}
 
 	if len(dirs) <= p.PreserveCount {
 		return
 	}
 
+	// Newest first by folder time: segment names are not always numeric (e.g. `seg-33a45d97-9996757`).
 	sort.Slice(dirs, func(i, j int) bool {
-		return phpAtoi(dirs[i]) > phpAtoi(dirs[j])
+		return dirs[i].modTime.After(dirs[j].modTime)
 	})
 
 	deleted := 0
-	for _, name := range dirs[p.PreserveCount:] {
-		full := filepath.Join(tsDir, name)
+	for _, dir := range dirs[p.PreserveCount:] {
+		full := filepath.Join(tsDir, dir.name)
 		if err := os.RemoveAll(full); err != nil {
-			logger.Warn("prune remove failed", slog.String("dir", name), slog.Any("err", err))
+			logger.Warn("prune remove failed", slog.String("dir", dir.name), slog.Any("err", err))
 			continue
 		}
 		deleted++

@@ -106,13 +106,13 @@ func TestPHPAtoi(t *testing.T) {
 
 func TestPathinfoFilename(t *testing.T) {
 	cases := map[string]string{
-		"1234.ts":         "1234",
-		"/path/seg.ts":    "seg",
-		"":                "",
-		"foo":             "foo",
-		"#EXTM3U":         "#EXTM3U",
-		"#EXTINF:10.0,":   "#EXTINF:10",
-		"foo.bar.baz":     "foo.bar",
+		"1234.ts":       "1234",
+		"/path/seg.ts":  "seg",
+		"":              "",
+		"foo":           "foo",
+		"#EXTM3U":       "#EXTM3U",
+		"#EXTINF:10.0,": "#EXTINF:10",
+		"foo.bar.baz":   "foo.bar",
 	}
 	for in, want := range cases {
 		if got := pathinfoFilename(in); got != want {
@@ -125,5 +125,29 @@ func TestTSRelative(t *testing.T) {
 	got := tsRelative("streams/foo/ts/1234/abc.ts")
 	if got != "1234/abc.ts" {
 		t.Errorf("tsRelative = %q", got)
+	}
+}
+
+func TestParse_MasterPlaylistSetsVariant(t *testing.T) {
+	pl := Parse([]byte("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=200000\nhttps://cdn/87/stream.m3u8?token_stream=a\n"))
+	if pl.Variant != "https://cdn/87/stream.m3u8?token_stream=a" {
+		t.Errorf("Variant = %q", pl.Variant)
+	}
+
+	if media := Parse([]byte("#EXTM3U\n#EXTINF:10.0,\n1234.ts\n")); media.Variant != "" {
+		t.Errorf("media playlist Variant = %q, want empty", media.Variant)
+	}
+}
+
+func TestSegmentKey_IgnoresQuery(t *testing.T) {
+	cases := map[string]string{
+		"1234.ts": "1234",
+		"seg-33a45d97-9996757.ts?cdn_key=87%3A33a4%3Aseg-33a45d97-9996757.ts&token_stream=x": "seg-33a45d97-9996757",
+		"#EXTINF:6.000000,": "#EXTINF:6",
+	}
+	for in, want := range cases {
+		if got := segmentKey(in); got != want {
+			t.Errorf("segmentKey(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

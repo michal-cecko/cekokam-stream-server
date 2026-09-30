@@ -12,17 +12,25 @@ type Playlist struct {
 	Lines      []string
 	Segments   []string
 	ExtinfSecs int
+	// Variant is the first stream URI of a master playlist, empty for a media playlist.
+	Variant string
 }
 
 func Parse(content []byte) Playlist {
 	rawLines := strings.Split(string(content), "\n")
 	pl := Playlist{Lines: rawLines}
+	streamInf := false
 	for _, line := range rawLines {
 		line = strings.TrimSpace(line)
 		switch {
 		case line == "":
 		case !strings.HasPrefix(line, "#"):
+			if streamInf && pl.Variant == "" {
+				pl.Variant = line
+			}
 			pl.Segments = append(pl.Segments, line)
+		case strings.HasPrefix(line, "#EXT-X-STREAM-INF:"):
+			streamInf = true
 		case strings.HasPrefix(line, "#EXTINF:"):
 			parts := strings.SplitN(line, ":", 2)
 			if len(parts) == 2 {
@@ -40,7 +48,7 @@ func Rewrite(pl Playlist, slug, name, publicURL string, renamed map[string]strin
 	out := make([]string, 0, len(pl.Lines))
 	for _, line := range pl.Lines {
 		line = strings.TrimSpace(line)
-		key := pathinfoFilename(line)
+		key := segmentKey(line)
 		if key != "" {
 			if tsFile, ok := renamed[key]; ok && tsFile != "" {
 				out = append(out, "ts/"+tsRelative(tsFile))
@@ -67,6 +75,15 @@ func tsRelative(p string) string {
 		return p
 	}
 	return p[idx+len("/ts/"):]
+}
+
+// segmentKey ignores the query, which some upstreams put on every segment
+// (e.g. `seg-1.ts?cdn_key=…&token_stream=…`).
+func segmentKey(s string) string {
+	if i := strings.IndexByte(s, '?'); i != -1 {
+		s = s[:i]
+	}
+	return pathinfoFilename(s)
 }
 
 func pathinfoFilename(s string) string {
