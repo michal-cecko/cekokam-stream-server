@@ -43,7 +43,7 @@ func (d *Downloader) Run(ctx context.Context, ch dashboard.Channel) {
 	logger.Info("downloader started")
 	defer logger.Info("downloader stopped")
 
-	mediaURL := d.tick(ctx, ch, "", logger)
+	d.tick(ctx, ch, logger)
 
 	t := time.NewTicker(d.PollInterval)
 	defer t.Stop()
@@ -53,15 +53,12 @@ func (d *Downloader) Run(ctx context.Context, ch dashboard.Channel) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			mediaURL = d.tick(ctx, ch, mediaURL, logger)
+			d.tick(ctx, ch, logger)
 		}
 	}
 }
 
-// tick returns the media playlist URL to poll next time. When the source is a
-// master playlist, its variant URL is reused so every poll does not open a new
-// upstream session; an empty result makes the next tick start from the source again.
-func (d *Downloader) tick(ctx context.Context, ch dashboard.Channel, mediaURL string, logger *slog.Logger) string {
+func (d *Downloader) tick(ctx context.Context, ch dashboard.Channel, logger *slog.Logger) {
 	start := time.Now()
 	stats := struct {
 		Downloaded int
@@ -72,33 +69,32 @@ func (d *Downloader) tick(ctx context.Context, ch dashboard.Channel, mediaURL st
 	fetchCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	if mediaURL == "" {
-		mediaURL = ch.Source
-	}
-
+	mediaURL := ch.Source
 	body, err := d.fetchPlaylist(fetchCtx, mediaURL)
 	if err != nil {
 		logger.Warn("fetch playlist failed", slog.Any("err", err))
-		return ""
+		return
 	}
 
+	// The variant URL is fetched fresh on every tick: its token (and the one on
+	// its segments) expires after about a minute on some upstreams.
 	pl := Parse(body)
 	if pl.Variant != "" {
 		mediaURL, err = resolveURL(mediaURL, pl.Variant)
 		if err != nil {
 			logger.Warn("resolve variant url failed", slog.String("variant", pl.Variant), slog.Any("err", err))
-			return ""
+			return
 		}
 		body, err = d.fetchPlaylist(fetchCtx, mediaURL)
 		if err != nil {
 			logger.Warn("fetch variant playlist failed", slog.Any("err", err))
-			return ""
+			return
 		}
 		pl = Parse(body)
 	}
 	if len(pl.Segments) == 0 {
 		logger.Warn("empty playlist (no segments)")
-		return ""
+		return
 	}
 
 	streamDir := filepath.Join(d.StorageDir, "streams", ch.Slug)
@@ -148,7 +144,7 @@ func (d *Downloader) tick(ctx context.Context, ch dashboard.Channel, mediaURL st
 
 	if err := atomicWrite(filepath.Join(streamDir, "stream.m3u8"), rewritten); err != nil {
 		logger.Error("publish m3u8 failed", slog.Any("err", err))
-		return mediaURL
+		return
 	}
 
 	d.Health.RecordChannelTick()
@@ -157,8 +153,6 @@ func (d *Downloader) tick(ctx context.Context, ch dashboard.Channel, mediaURL st
 		slog.Int("skipped", stats.Skipped),
 		slog.Int("failed", stats.Failed),
 		slog.Duration("runtime", time.Since(start)))
-
-	return mediaURL
 }
 
 func (d *Downloader) fetchPlaylist(ctx context.Context, source string) ([]byte, error) {

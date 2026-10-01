@@ -18,13 +18,12 @@ import (
 
 // fakeUpstream mimics wan.fajn.tv: the source is a master playlist whose variant
 // and segments only work with their own query string.
-func fakeUpstream(t *testing.T, masterHits *int) *httptest.Server {
+func fakeUpstream(t *testing.T) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		switch {
 		case r.URL.Path == "/s/key/87/stream.m3u8" && q.Get("token_stream") == "":
-			*masterHits++
 			io.WriteString(w, "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=200000\n"+
 				"http://"+r.Host+"/s/key/87/stream.m3u8?device=dev&token_stream=tok\n")
 		case r.URL.Path == "/s/key/87/stream.m3u8" && q.Get("token_stream") == "tok":
@@ -40,8 +39,7 @@ func fakeUpstream(t *testing.T, masterHits *int) *httptest.Server {
 }
 
 func TestTick_FollowsMasterPlaylistAndKeepsSegmentQuery(t *testing.T) {
-	masterHits := 0
-	upstream := fakeUpstream(t, &masterHits)
+	upstream := fakeUpstream(t)
 	defer upstream.Close()
 
 	storage := t.TempDir()
@@ -49,10 +47,7 @@ func TestTick_FollowsMasterPlaylistAndKeepsSegmentQuery(t *testing.T) {
 	d := NewDownloader(storage, "https://stream.example.com", time.Second, 5*time.Second, health.New(), logger)
 	ch := dashboard.Channel{Slug: "premier-sport-1-hd", Name: "Premier Sport 1 HD", Source: upstream.URL + "/s/key/87/stream.m3u8?device=dev"}
 
-	mediaURL := d.tick(context.Background(), ch, "", logger)
-	if !strings.Contains(mediaURL, "token_stream=tok") {
-		t.Fatalf("mediaURL = %q, want the variant URL", mediaURL)
-	}
+	d.tick(context.Background(), ch, logger)
 
 	seg, err := os.ReadFile(filepath.Join(storage, "streams", ch.Slug, "ts", "seg-ab12-100", MD5Hex("seg-ab12-100.ts?cdn_key=87%3Aab12%3Aseg-ab12-100.ts&token_stream=tok")+".ts"))
 	if err != nil {
@@ -71,25 +66,6 @@ func TestTick_FollowsMasterPlaylistAndKeepsSegmentQuery(t *testing.T) {
 	}
 	if !strings.Contains(string(manifest), "\nts/seg-ab12-101/") {
 		t.Errorf("manifest does not point at local segments:\n%s", manifest)
-	}
-
-	d.tick(context.Background(), ch, mediaURL, logger)
-	if masterHits != 1 {
-		t.Errorf("master playlist fetched %d times, want 1 (variant URL reused)", masterHits)
-	}
-}
-
-func TestTick_StartsFromSourceAgainWhenVariantFails(t *testing.T) {
-	masterHits := 0
-	upstream := fakeUpstream(t, &masterHits)
-	defer upstream.Close()
-
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	d := NewDownloader(t.TempDir(), "https://stream.example.com", time.Second, 5*time.Second, health.New(), logger)
-	ch := dashboard.Channel{Slug: "x", Name: "X", Source: upstream.URL + "/s/key/87/stream.m3u8?device=dev"}
-
-	if got := d.tick(context.Background(), ch, upstream.URL+"/s/key/87/stream.m3u8?token_stream=expired", logger); got != "" {
-		t.Errorf("tick returned %q, want empty so the next tick uses the source", got)
 	}
 }
 
